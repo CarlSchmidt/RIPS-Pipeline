@@ -1,5 +1,28 @@
-pro RIPS_Mercury_Perkins_v02, PART=part, NIGHT=night
 
+
+function Estimate_Seeing, FWHM_arcsec ; FWHM Arcseconds <----solve for this iteratively  
+  Common Seeing_Estimate, A, B, Spectral_platescale, Imaging_platescale 
+  if FWHM_arcsec gt 1.3 then return, 0.
+  seeing_sigma      = FWHM_arcsec / 2.355                  ; convert FWHM to sigma
+  seeing_sigma      = seeing_sigma/Imaging_platescale      ; convert to Gaussian sigma in pixels
+  Blurred_B         = convol(B, GAUSSIAN_FUNCTION([seeing_sigma, seeing_sigma]), /EDGE_ZERO, /normalize, /NAN)
+  
+  ; Normalize both excluding mask
+    junk  = where(finite(A), complement = mask)
+    Blurred_B[mask]  = !values.F_NaN
+    A         = A/total(A, /NAN)
+    Blurred_B = Blurred_B/total(B, /NAN)
+  
+  ;Stat   = total(Blurred_B-A, /NaN)
+  Stat    = stddev(Blurred_B-A, /NaN)
+  ;tv, bytscl(A - Blurred_B)
+  ;print, FWHM_arcsec[0], stat[0]
+return, stat ;Scalar Value for AMOEBA TO MINIMIZE
+end
+
+
+pro RIPS_Mercury_Perkins_v02, PART=part, NIGHT=night
+  Common Seeing_Estimate, A, B, Spectral_platescale, Imaging_platescale 
 ; *********************************************************************************************************************
 ; *********************************************************************************************************************
 ; Routine to extract Na emission from spectral scans over Mercury's disk with Perkins/RIPS in order to create a 2-D
@@ -47,24 +70,18 @@ Start_time = SYSTIME(/SECONDS)
   if Cloud[0] ne '' then base_dir = 'Y:\obs_18\Perkins_RIPS_March\'
                                                       
 ; =====================================================================================================================
-; Define variables
+; Define all variables
 ; =====================================================================================================================
-SetDefaultValue, part, 4.
+
 SetDefaultValue, night, '15'                                              ; the night of the run; default '15' (only kept for possible future runs with multiple nights)
 SetDefaultValue, thresh, 12                                               ; hotpixel removal threshold (sigma above background)
 SetDefaultValue, width, 5                                                 ; Median smoothing width to get local background reference (for pixels above thresh) 
 SetDefaultValue, minfac, 0.9                                              ; maximum factor to apply to reference spectrum for Na emission extraction
 SetDefaultValue, maxfac, 1.3                                              ; minimum factor to apply to reference spectrum for Na emission extraction
 SetDefaultValue, dfac, 0.01                                               ; factor increment for minfac->maxfac
-SetDefaultValue, ct, 20                                                   ; default color table
-SetDefaultValue, max_spec, 2500.                                          ; partial hack --> the max value of the spectral Na cube after coadding (used for "prettier" movies)
-SetDefaultValue, max_img, 1.6e6                                           ; partial hack --> the max value of the image cube after coadding (used for "prettier" movies)
-SetDefaultValue, img_extraction, [145,295,85,235]                         ; coordinates for extracting a square Mercury image, [x1,x2,y1,y2]
-SetDefaultValue, spec_extraction, [145,295,77,227]                        ; coordinates for extracting a square Mercury spectral image, [x1,x2,y1,y2]
+SetDefaultValue, ct, 22                                                   ; default color table
 SetDefaultValue, movie_scale, 4                                           ; scale the x-y dimensions of the extracted "Na image" and "Mercury disk" arrays for movies by this value (used for bigger and therefore "prettier" movies)
-SetDefaultValue, do_rotate, 0                                             ; 0=no rotation of image, 1=rotate Na image (inverted, =5 -- see below)
-SetDefaultValue, do_median, 0                                             ; 0=use mean when constructing Na Mercury image, 1=use median instead
-SetDefaultValue, do_smooth, 1                                             ; set to 1 to smooth the imaging channel before spatially coaligning
+SetDefaultValue, do_smooth, 0                                             ; set to 1 to smooth the imaging channel before spatially coaligning
 SetDefaultValue, smooth_width, 6                                          ; if do_smooth = 1, the pixel width of the smoothing kernel, HACK: CURRENTLY THE SAME FOR SPATIAL AND SPECTRAL. BE CAREFUL!
 SetDefaultValue, stddev_cutoff, 1.                                        ; only use Mercury frames with stddev > [stddev_cutoff]_sigma, these are defined as "good" 
 SetDefaultValue, Flux_Cal_Wavelength, 5893.                               ; Wavelength to extract and compare to Hapke code (Angstroms)
@@ -73,7 +90,8 @@ mercury_dir   = base_dir+'15\'                                            ; dire
 dark_dir      = base_dir+'14\Carl_Keep\'                                  ; directory with dark file
 flat_dir      = base_dir+'15\'                                            ; directory with flat file
 sky_dir       = base_dir+'15\'                                            ; directory with sky file
-Mercury_file  = strcompress(789+indgen(17), /remove_all) + '.fits'       ; SUFFIX of the Mercury kinetic series to use (SKIPPING 788 BECAUSE OF IT'S DIFFERENT ROTISERIZER ANGLE)
+Arc_files     = 'Neon_NaSpectra_624slitwidth_NaND1imaging*.fits'          ; Arc frames 
+Mercury_file  = strcompress(789+indgen(17), /remove_all) + '.fits'        ; SUFFIX of the Mercury kinetic series to use (SKIPPING 788 BECAUSE OF IT'S DIFFERENT ROTISERIZER ANGLE)
 ;Mercury_file  = strcompress(788, /remove_all) + '.fits'                   ; SUFFIX of the Mercury kinetic series to use (SKIPPING 788 BECAUSE OF IT'S DIFFERENT ROTISERIZER ANGLE)
 sky_file      = 'RIPS1_Thu Mar 15 2018_01.12.12_785.fits'                 ; sky frame
 dark_file     = 'Dark.fits'                                               ; dark frame
@@ -82,9 +100,8 @@ n_flats       = 3                                                         ; Numb
 Na_D_rngs     = [235,255,475,495]                                         ; ranges of Na D Mercury emission (x pixels in spec domain for D1 and D2)
 Na_D_rng      = 10                                                        ; number of pixels around Na D Mercury emission to avoid (in illum scaling for part 2)
 do_realign    = 0                                                         ; 0=run part 1 as normal, 1=use previous cross-correlation as master template
-;frame_ref     = 203                                                       ; this number identifies a frame # in imaging_cube used as the reference key spatially aligning all other frames, works best if object is off-slit
-frame_ref     = 152
-;frame_ref     = 52
+frame_ref     = 203                                                       ; this number identifies a frame # in imaging_cube used as the reference key spatially aligning all other frames, works best if object is off-slit
+;frame_ref     = 152
 offset_maxes  = [60,60]                                                   ; if the [x,y] spatial offset returned by image correlation is larger than these values, correlation fails and use the brightness centroid 
 ims           = [283,759,39,374]                                          ; variables for image analysis: x1,x2,y1,y2 (formerly "imaging_statsec")
 sps           = [99,899,502,941]                                          ; variables for spectral analysis: x1,x2,y1,y2 (formerly "spectra_statsec")
@@ -96,6 +113,8 @@ imaging_platescale  = 0.114820                                            ; IMAG
 Na_D1_WL      = 5895.92424                                                ; Rest wavelength from NIST
 Na_D2_WL      = 5889.95095                                                ; Rest wavelength from NIST
 Body          = 'Mercury'                                                 ; For SPICE purposes
+effective_seeing  = 2.7                                                   ; FWHM Arcseconds <----solve for this iteratively  
+Lucky_fraction    = 0.20
 
 ; COULD OMIT THIS AND CALCULATE IT IN PART 3 AND 4!
 ; Dispersion calculation: at y of 265, lines occur at 390 and 632 in x 
@@ -109,7 +128,7 @@ Body          = 'Mercury'                                                 ; For 
   ;  print, angular_sep / pixel_sep
   plate_scale_ratio  =  Spectral_platescale / imaging_platescale            ; Even if Jeff and Carl are both a few pixels off, this is accurate within ~ 3%
   
-; ======================================LOAD SPICE========================================================================
+;; ======================================LOAD SPICE========================================================================
   kernel_directory    = 'C:\SPICE\'
   CSPICE_KTOTAL, 'all', count
   PRINT, STRCOMPRESS('Cleaning ' + STRING(count) + ' lingering kernels out of memory . . .')
@@ -225,29 +244,23 @@ if part eq 1 or part eq 99 then begin ;Find the centroids by cross-correlation w
       flat[WHERE(flat gt 2.0, /NULL)] = !values.f_Nan                       ; reject unusual counts for centroid
     gooddata = where(Finite(flat), ngooddata, comp=baddata, ncomp=nbaddata)
     if nbaddata gt 0 then flat[baddata] = interpol(flat[gooddata], gooddata, baddata)
-;    if do_realign then begin
-;        restore, outdir + 'shift_array.sav'                               ; contains shift_array, sharpness_metric, and aligned_imaging_cube
-;        shift_array_old = shift_array                                     ; keep old shift_array for comparison
-;        reference = total(aligned_imaging_cube,3)                         ; create "master Mercury" template for cross-correlation
-;    endif else begin
         ireference = (reform(imaging_cube[*,*,frame_ref]) - dark) / flat
         acre, ireference, reference, thresh, width                         ; clean any hot pixels
-;    endelse
 
     ; Find indicies of all pixels under the slit in the imaging channel
       junk = min(total(flat, 2), slit_center)                         ; roughly find the slit center
       h    = histogram(flat, binsize = .05, REVERSE_INDICES=ri)       ; bin the flat into 0.05 bins
-      slit_indicies = ri[ri[0]:ri[9]-1]                               ; find inidices of pixels in the lowest few bins of the flat's histogram 
-      slit_indicies = array_indices(flat, slit_indicies)              ; convert into x & y indices
-      keep = where(abs(slit_indicies[0,*] - slit_center) lt 10, /Null); keep only inidices within 10 pixels of slit center       
-      slit_indicies = slit_indicies[*,keep]
+      slit_indices = ri[ri[0]:ri[9]-1]                               ; find inidices of pixels in the lowest few bins of the flat's histogram 
+      slit_indices = array_indices(flat, slit_indices)              ; convert into x & y indices
+      keep = where(abs(slit_indices[0,*] - slit_center) lt 10, /Null); keep only inidices within 10 pixels of slit center       
+      slit_indices = slit_indices[*,keep]
       dummy = flat
-      dummy[ slit_indicies[0,*], slit_indicies[1,*] ] = max(flat)     ; show the location of pixels fully under the slit.
+      dummy[ slit_indices[0,*], slit_indices[1,*] ] = max(flat)     ; show the location of pixels fully under the slit.
       wset, 0      
       cgimage, hist_equal(dummy), title='flat'
       
     ; Interpolate pixels over the slit in Reference image that we're aligning to, best to choose a 'frame_ref' reference frame number with the slit fully off the disk
-      reference[ slit_indicies[0,*], slit_indicies[1,*] ] = !values.F_Nan  ; define slit pixels as NaN
+      reference[ slit_indices[0,*], slit_indices[1,*] ] = !values.F_Nan  ; define slit pixels as NaN
       fill_missing, reference, !values.F_Nan, 1                            ; interpolate over slit
 
     ; Log the correlations to the reference image (correlation post-alignment)
@@ -259,7 +272,7 @@ if part eq 1 or part eq 99 then begin ;Find the centroids by cross-correlation w
     print, '-----Frame-#---X-------Y-----Centroid-WRT-Frame-#', strcompress(frame_ref,/remove_all)
     for i = 0, s[2]-1 do begin
       iframe = (reform(imaging_cube[*,*,i]) - dark) / flat              ; "raw" imaging frame
-      iframe[ slit_indicies[0,*], slit_indicies[1,*] ] = !values.F_Nan  ; define slit pixels as NaN
+      iframe[ slit_indices[0,*], slit_indices[1,*] ] = !values.F_Nan  ; define slit pixels as NaN
       fill_missing, iframe, !values.F_Nan, 1                            ; interpolate over slit
       frame = iframe
       if do_smooth then begin                                           ; set up bandpass filter to aid image alignment
@@ -275,6 +288,11 @@ if part eq 1 or part eq 99 then begin ;Find the centroids by cross-correlation w
       CORREL_OPTIMIZE, ref_bandpass[ref_bandpass_centeroid_x-80:ref_bandpass_centeroid_x+80, ref_bandpass_centeroid_y-80:ref_bandpass_centeroid_y+80], $
                        img_bandpass[ref_bandpass_centeroid_x-80:ref_bandpass_centeroid_x+80, ref_bandpass_centeroid_y-80:ref_bandpass_centeroid_y+80], xoffset_optimum, yoffset_optimum, /NUMPIX
       Imaging_shift_array[i,*] = [xoffset_optimum, yoffset_optimum]             ; track required alignment offsets
+      
+      zstack_align_images,ref_bandpass[ref_bandpass_centeroid_x-80:ref_bandpass_centeroid_x+80, ref_bandpass_centeroid_y-80:ref_bandpass_centeroid_y+80], $
+                          img_bandpass[ref_bandpass_centeroid_x-80:ref_bandpass_centeroid_x+80, ref_bandpass_centeroid_y-80:ref_bandpass_centeroid_y+80],xshift,yshift
+      
+      stop
       
       CORREL[i] = CORREL_IMAGES( Ref_bandpass[ref_bandpass_centeroid_x-80:ref_bandpass_centeroid_x+80, ref_bandpass_centeroid_y-80:ref_bandpass_centeroid_y+80], $
                                  img_bandpass[ref_bandpass_centeroid_x-80:ref_bandpass_centeroid_x+80, ref_bandpass_centeroid_y-80:ref_bandpass_centeroid_y+80], $
@@ -319,32 +337,100 @@ if part eq 1 or part eq 99 then begin ;Find the centroids by cross-correlation w
         aligned_spectra_cube[*,*,i] = shift(specframe, [0, Spectra_shift_array[i,1]]) ; Co-align Spectral frame **in Y only**. Y_Spec = -Y_img/PSR. Later on, we do the X_Spec = X_img/PSR.                     
 
         ; *****************************Sharpness criterion for lucky imaging************************************
-          iframe[ slit_indicies[0,*], slit_indicies[1,*] ] = !values.F_Nan            ; mask slit pixels as NaN
+          iframe[ slit_indices[0,*], slit_indices[1,*] ] = !values.F_Nan            ; mask slit pixels as NaN
           fill_missing, iframe, !values.F_Nan, 1                                      ; interpolate over slit
           frame = shift(iframe, [Imaging_shift_array[i,*]]) 
           subframe = frame[ref_bandpass_centeroid_x-80:ref_bandpass_centeroid_x+80-1, ref_bandpass_centeroid_y-80:ref_bandpass_centeroid_y+80-1] ; extract just the image part of the frame
           sharpness_metric[i] = total(abs(deriv(rebin(subframe, 40, 40))))  ; total the absolute value of the spatial derivative. higher --> sharper image (TEMP, we can do better!)
       endfor  
       sharpness_metric = sharpness_metric / mean(sharpness_metric) ;normalize this to 1 for convenience 
-    save, Imaging_shift_array, Spectra_shift_array, correl, aligned_imaging_cube, aligned_spectra_cube, sharpness_metric, filename = outdir + 'shift_array.sav'
+    save, Imaging_shift_array, Spectra_shift_array, correl, aligned_imaging_cube, aligned_spectra_cube, sharpness_metric, Slit_indices, filename = outdir + 'shift_array.sav'
     beep
 endif
 
 ;******************************testing sharpness metric***********************
-if part eq 1.5 then begin
+if part eq 1.5 then begin ;testing for now! do after part 4
   restore, outdir + 'shift_array.sav'  
-  ranked = SORT(correl)
-  window, 0
-  cgimage, total(aligned_imaging_cube[*,*, ranked[0:99]], 3), /keep_aspect
-  window, 1
-  cgimage, total(aligned_imaging_cube[*,*, ranked[1500:1599]], 3), /keep_aspect
+  restore, outdir + 'images_to_plot.sav'
+
+  s = size(aligned_imaging_cube, /dimensions)
+  sh = size(hapke, /dimensions)
+  hapke = congrid(hapke, sh[0]*plate_scale_ratio, sh[1]*plate_scale_ratio, cubic = -0.5)  ; Scale it
+  seeing_sigma      = 2.7 / 2.355             ; convert FWHM to sigma
+  seeing_sigma      = seeing_sigma/Spectral_platescale     ; convert to Gaussian sigma in pixels
+  Blurry_Hapke = convol(Hapke, GAUSSIAN_FUNCTION([seeing_sigma, seeing_sigma]), /EDGE_ZERO, /normalize)
+  Blurry_Hapke = rotate(Blurry_Hapke, 7)
+  hapke = rotate(hapke, 7)
+  ranked = reverse(SORT(correl))
+  find_shift_with_me = total(aligned_imaging_cube[*,*, ranked[0:99]], 3, /NaN)
+  CORREL_OPTIMIZE, Blurry_Hapke, find_shift_with_me, x, y, /NUMPIX
+
+  ; mask the slit:
+    for i = 0, s[2]-1 do begin
+      slit_mask = [ Slit_indices[0,*] + Imaging_shift_array[i,0], Slit_indices[1,*] + Imaging_shift_array[i,1] ]
+      frame = reform(aligned_imaging_cube[*,*,i])
+      frame[ slit_mask[0,*], slit_mask[1,*] ] = !values.F_NaN
+      aligned_imaging_cube[*,*,i] = frame
+      ;test = reform(aligned_imaging_cube[*,*,i])
+      ;tv, bytscl(test)
+    endfor
+  
+  ; now align the cube to hapke
+    corr_w_hapke = shift(aligned_imaging_cube, x, y, 0)
+
+  Hapke_corr = fltarr(s[2])
+  for i = 0, s[2]-1 do begin 
+    this_hapke = hapke[ 0:s[0]-1, 0:s[1]-1 ] ;crop it
+    junk = where(finite(corr_w_Hapke[*,*,i]), complement = mask)
+    ;this_hapke[mask] = !values.F_NaN ;don't maskk out hapke slit
+    if i eq 0 then begin
+      window, 0
+      tv, bytscl(corr_w_Hapke[*,*,i])
+      window, 1
+      tv, bytscl(this_Hapke)
+    endif  
+    B = this_Hapke
+    A = reform(corr_w_Hapke[*,*,i])
+    A = A[226:365, 130:289]
+    B = B[226:365, 130:289]
+;    A = rebin(a, 70, 80)
+;    B = rebin(b, 70, 80)
+    A = rebin(a, 35, 40)
+    B = rebin(b, 35, 40)
+
+    ;CORREL_OPTIMIZE, A, B, xoffset_optimum, yoffset_optimum, /NUMPIX
+
+   ;stop
+
+    ;Hapke_CORR[i] = AMOEBA(1.e-4, function_name='Estimate_Seeing', FUNCTION_VALUE = fval, P0 = [2.8], Scale = [1.], NCalls = 100 )
+    ;Hapke_CORR[i] = AMOEBA(1.e-4, function_name='Estimate_Seeing', FUNCTION_VALUE = fval, P0 = [1.4], Scale = [.5], NCalls = 100 )
+    Hapke_CORR[i] = AMOEBA(1.e-4, function_name='Estimate_Seeing', FUNCTION_VALUE = fval, P0 = [0.7], Scale = [.25], NCalls = 100 )
+    
+    ;stop
+    Print, i, ' seeing = ', 4.*Hapke_CORR[i]
+    ;indices = [ where( finite(A) eq 1 ), where( finite(B) eq 1 ) ]
+    ;common_indices = indices( UNIQ(indices, sort(indices)) )
+
+    ;Hapke_CORR[i] = CORRELATE( A[common_indices], B[common_indices] )
+    ;stop
+    ;Hapke_CORR[i] = CORREL_IMAGES( this_Hapke, corr_w_Hapke[*,*,i], xoffset_b = 0, yoffset_B = 0, XSHIFT =0, ySHIFT = 0) ; 2-D Correlation at this alignment
+  endfor
+
+  ranked = reverse(SORT(Hapke_corr))
+  window, 2
+  cgimage, total(corr_w_hapke[*,*, ranked[0:99]], 3, /NaN), /keep_aspect
+  window, 3
+  ;cgimage, total(aligned_imaging_cube[*,*, ranked[1500:1599]], 3), /keep_aspect
+  cgimage, total(corr_w_hapke[*,*,ranked[1500:1599]], 3, /NaN), /keep_aspect
+  ;
   ;seems to work fairly well.
-  stop
+  
+  save, Hapke_CORR, filename = outdir + 'Hapke_CORR.sav'
 endif
 ;******************************testing sharpness metric***********************
 
 ; =====================================================================================================================
-; Part 2 : Isolate the sodium emission in every specctral frame
+; Part 2 : Isolate the sodium emission in every spectral frame
 ; =====================================================================================================================
 if part eq 2 or part eq 99 then begin 
     img_cube = MRDFITS(outdir + 'imaging_cube.fits', 0, header2, /fscale, /silent )
@@ -540,8 +626,9 @@ if part eq 3 or part eq 99 then begin
   Print, 'Fitting exosphere D2 in every spatial bin of every frame (slow, ~200 frames/min)...'
   A = [80.,D2_trace[0],1.5,0.] ; Initial guess for fitting
   for n = 0, s[2]-1 do begin
-    if do_smooth then img = smooth( exosphere_spectra_cube[*,*,n], [2, smooth_width] ) $
-                 else img = exosphere_spectra_cube[*,*,n]
+    ;if do_smooth then img = smooth( exosphere_spectra_cube[*,*,n], [2, smooth_width] ) $
+    ;             else img = exosphere_spectra_cube[*,*,n]
+    img = exosphere_spectra_cube[*,*,n]
     err_img = sqrt( abs(img) )     
     for i = 0, s[1]-1 do begin
        a[0] = height[i]
@@ -568,8 +655,9 @@ if part eq 3 or part eq 99 then begin
   Print, 'Fitting exosphere D1 in every spatial bin of every frame (slow, ~200 frames/min)...'
   A = [80.,D1_trace[0],1.5,0.] ; Initial guess for fitting
   for n = 0, s[2]-1 do begin
-    if do_smooth then img = smooth( exosphere_spectra_cube[*,*,n], [2, smooth_width] ) $
-                 else img = exosphere_spectra_cube[*,*,n]
+    ;if do_smooth then img = smooth( exosphere_spectra_cube[*,*,n], [2, smooth_width] ) $
+    ;             else img = exosphere_spectra_cube[*,*,n]
+    img = exosphere_spectra_cube[*,*,n]
     err_img = sqrt( abs(img) )
     for i = 0, s[1]-1 do begin
       a[0] = height[i]
@@ -609,6 +697,7 @@ if part eq 4 or part eq 99 then begin
   if part ne 99 then restore, outdir + 'spectral_cubes.sav' ; We'll need the cube of (co-aligned?) surface reflectance spectra
   if part ne 99 then restore, outdir + 'brightness.sav'     ; We'll need the D1 & D2 Traces to figure out which pixel the calibration wavelength is located at.
   if part ne 99 then restore, outdir + 'shift_array.sav'    ; contains shift_arrays and aligned_cubes of both channels, sharpness_metric & correl 
+  if part ne 99 then restore, outdir + 'Hapke_CORR.sav'
   s  = size(surf_refl_spectra_cube , /dimensions)
   
   ; Reconstruct an image from the spectral channel at the calibration wavelength
@@ -620,8 +709,9 @@ if part eq 4 or part eq 99 then begin
     ; As in part 3 for sodium, extact brightness slices. Use the surface reflectance cube, the exosphere cube already has the reflectance component removed
       DN_per_A  = fltarr(s[2], s[1])
       for n = 0, s[2]-1 do begin
-        if do_smooth then img = smooth( surf_refl_spectra_cube[*,*,n], [2, smooth_width] ) $
-                     else img = surf_refl_spectra_cube[*,*,n]
+        ;if do_smooth then img = smooth( surf_refl_spectra_cube[*,*,n], [2, smooth_width] ) $
+                     ;else img = surf_refl_spectra_cube[*,*,n]
+        img = surf_refl_spectra_cube[*,*,n]             
         for i = 0, s[1]-1 do begin              
           DN_per_A[n, i] = TOTAL(img[Cal_wavelength_trace[i]-(0.5/dispersion):Cal_wavelength_trace[i]+(0.5/dispersion), i]) 
         endfor
@@ -639,27 +729,44 @@ if part eq 4 or part eq 99 then begin
     ;      LSF = median(big_array, dimension = 3)
     ;      LSF = reform(LSF[sps[0]:sps[1],sps[2]:sps[3], *])
     
-    ; Use a flatfield to get the PSF, then adjust it for the different platescale in the spectral channel. HACK THIS NEGLECTS ANY (PROBABLY SMALL) FOCUS DIFFERENCES BETWEEN THE IMAGING AND SPECTRAL CHANNELS. 
-      iDark = MRDFITS(dark_dir + dark_file, 0, header, /fscale, /silent )   ; read in dark
-      dark  = idark[ims[0]:ims[1],ims[2]:ims[3]]
-      dark  = sigma_filter( dark, width, N_sigma=thresh)
-      big_array = fltarr(1024, 1024, N_flats)
-      for i = 0, N_flats-1 do big_array[*,*,i] = MRDFITS(flat_dir + flat_file + strcompress(i+1, /remove_all) + '.fits', 0, header, /fscale, /silent ) ; read flat
-      iflat = median(big_array, dimension = 3)  ; combine flat flat
-      flat  = ( iflat[ims[0]:ims[1],ims[2]:ims[3]] - dark ) / max( iflat[ims[0]:ims[1],ims[2]:ims[3]] - dark ) ; Crop to just imaging portion
-      flat  = flat + (1. - median(flat))                                    ; this normalizes such that the median of the flat is 1
-      profile = total(flat[*, mean(ims[2:3])-10 : mean(ims[2:3])+10], 2)
-      x = findgen(N_elements(profile))
-      keep = where(x lt 220 or x gt 250)       
-      coeffs = POLY_FIT( x[keep], profile[keep], 5 )
-      PSF = GAUSSFIT( X, poly(x, coeffs)-profile, PSF_coeffs, nterms = 3 ) 
-      window, 4, title = 'SPATIAL PSF ESTIMATE: Green fit will be used for weighting scheme when placing the slit'
-        cgplot, profile
-        cgplot, x[keep],  profile[keep], color = 'red', /overplot
-        cgplot, poly(x, coeffs), color = 'blue', /overplot
-        cgplot, poly(x, coeffs)-profile, /overplot
-        cgplot, x, PSF, color = 'green', /overplot
-      PSF_1D = GAUSSIAN_FUNCTION( PSF_Coeffs[2]/plate_scale_ratio, /NORMALIZE)  ; The spectral channel has a smaller plate scale than the imaging channel, correct for this here
+    ;-----------------------------Old and seemingly bad way------------------------------------------------------
+;    ; Use a flatfield to get the PSF, then adjust it for the different platescale in the spectral channel. HACK THIS NEGLECTS ANY (PROBABLY SMALL) FOCUS DIFFERENCES BETWEEN THE IMAGING AND SPECTRAL CHANNELS. 
+;      iDark = MRDFITS(dark_dir + dark_file, 0, header, /fscale, /silent )   ; read in dark
+;      dark  = idark[ims[0]:ims[1],ims[2]:ims[3]]
+;      dark  = sigma_filter( dark, width, N_sigma=thresh)
+;      big_array = fltarr(1024, 1024, N_flats)
+;      for i = 0, N_flats-1 do big_array[*,*,i] = MRDFITS(flat_dir + flat_file + strcompress(i+1, /remove_all) + '.fits', 0, header, /fscale, /silent ) ; read flat
+;      iflat = median(big_array, dimension = 3)  ; combine flat flat
+;      flat  = ( iflat[ims[0]:ims[1],ims[2]:ims[3]] - dark ) / max( iflat[ims[0]:ims[1],ims[2]:ims[3]] - dark ) ; Crop to just imaging portion
+;      flat  = flat + (1. - median(flat))                                    ; this normalizes such that the median of the flat is 1
+;      profile = total(flat[*, mean(ims[2:3])-10 : mean(ims[2:3])+10], 2)
+;      x = findgen(N_elements(profile))
+;      keep = where(x lt 220 or x gt 250)       
+;      coeffs = POLY_FIT( x[keep], profile[keep], 5 )
+;      PSF = GAUSSFIT( X, poly(x, coeffs)-profile, PSF_coeffs, nterms = 3 ) 
+;      window, 4, title = 'SPATIAL PSF ESTIMATE: Green fit will be used for weighting scheme when placing the slit'
+;        cgplot, profile
+;        cgplot, x[keep],  profile[keep], color = 'red', /overplot
+;        cgplot, poly(x, coeffs), color = 'blue', /overplot
+;        cgplot, poly(x, coeffs)-profile, /overplot
+;        cgplot, x, PSF, color = 'green', /overplot
+;      PSF_1D = GAUSSIAN_FUNCTION( PSF_Coeffs[2]/plate_scale_ratio, /NORMALIZE)  ; The spectral channel has a smaller plate scale than the imaging channel, correct for this here
+      
+    ;------------------------------------------------New way----------------------------------------------------  
+      arc_frames = file_Search(Mercury_Dir + arc_files, count = n_arcs)
+      big_array = fltarr(1024, 1024, n_arcs)
+      for i = 0, n_arcs-1 do big_array[*,*,i] = MRDFITS(arc_frames[i], 0, header, /fscale, /silent )   ; read in arcs
+            Dark = MRDFITS(dark_dir + dark_file, 0, header, /fscale, /silent )   ; read in dark
+            dark = median(dark, dimension = 3) 
+            dark  = sigma_filter( dark, width, N_sigma=thresh)
+      Neon = mean(big_array, dimension=3) - dark
+      Neon = Neon[*,sps[2]:sps[3]]
+      Neon = total(Neon[*,50:100], 2) ; Always inspect that this this portion of the line is straight
+      junk = max(Neon, line_center)
+      Neon = Neon[line_center-5:line_center+5]
+      PSF_1D = Neon/total(Neon) ; point spread function accros the slit (at a 624 width setting the slit is surely resolved, and RIPS is acting like an imaging spectrograph) 
+   ;------------------------------------------------End New way----------------------------------------------------  
+
       PSF_Size = N_elements(PSF_1D)
       spatial_weights = rebin(PSF_1D, psf_size, s[1])
 
@@ -672,10 +779,10 @@ if part eq 4 or part eq 99 then begin
       weighting_frame          = fltarr(s[0], s[1]) 
       weighting_frame[home[0] + Spectra_shift_array[i,0] - PSF_Size/2.: home[0] + Spectra_shift_array[i,0] + PSF_Size/2.-1,*] = spatial_weights      
       flux_cube_weights[*,*,i] = weighting_frame
-      cgimage, flux_cube_weights[*,*,i] * flux_cube[*,*,i]
-      wait, 0.04
+      ;cgimage, flux_cube_weights[*,*,i] * flux_cube[*,*,i]
+      ;wait, 0.04
     endfor    
-stop
+
     ; now take the geometric mean using the weighting
       Calib_img    = total(flux_cube*flux_cube_weights, 3, /NAN)  / total(flux_cube_weights, 3)
       Na_D2_img    = total(Na_D2_cube*flux_cube_weights, 3, /NAN) / total(flux_cube_weights, 3)
@@ -686,9 +793,9 @@ stop
       Na_D1_img[no_brightness_information] = 0.
    
     ; Gather top 10%
-      Best_Fraction_of_Images = 0.50
-      ranked = reverse(SORT(correl)) ; Rank highest to lowest correlations
-      cut_index = fix(s[2]*Best_Fraction_of_Images)
+      ;ranked = reverse(SORT(correl)) ; Rank highest to lowest correlations
+      ranked = (SORT(Hapke_corr))
+      cut_index = fix(s[2]*Lucky_fraction)
    
     ; now take the geometric mean of Just the lucky ones
       Lucky_Calib_img    = total(flux_cube[*,*,ranked[0:cut_index]]*flux_cube_weights[*,*,ranked[0:cut_index]], 3, /NAN)  / total(flux_cube_weights[*,*,ranked[0:cut_index]], 3)
@@ -703,33 +810,37 @@ stop
     header = headfits(outdir + 'imaging_cube.fits')  ; Grab a file header for the timestamp
     Surface_Flux_Calibration, Body = 'Mercury', Timestamp = sxpar(header, 'DATE'), Wavelength = Flux_Cal_Wavelength, Output_image = outdir + 'Hapke_For_Perkins.eps', /align_celestial_north, $
       Hapke_Platescale = Hapke_Platescale, MR_per_A = MR_per_A, Make_picture = Make_picture 
-    Flux_Cal_Img_Size = size(MR_per_A, /dim)
-    Flux_Cal_Spectral = congrid( MR_per_A, Flux_Cal_Img_Size[0] * Hapke_Platescale/Spectral_platescale, Flux_Cal_Img_Size[1] * Hapke_Platescale/Spectral_platescale, cubic = -0.5)
-    effective_seeing = 2.7                                  ; "effective" seeing FWHM arcseconds
-    effective_seeing = effective_seeing / 2.355             ; convert FWHM to sigma
-    effective_seeing = effective_seeing/Spectral_platescale ; convert to Gaussian sigma in pixels
-    visual_inspection = convol(rot(Flux_Cal_Spectral, 203, MISSING=0., /interp), GAUSSIAN_FUNCTION([effective_seeing,effective_seeing]), /EDGE_ZERO, /normalize)
+    Flux_Cal_Img_Size = size(MR_per_A, /dimensions)
+    Flux_Cal_Spectral = congrid( MR_per_A, round(Flux_Cal_Img_Size[0]*Hapke_Platescale/Spectral_platescale), round(Flux_Cal_Img_Size[1]*Hapke_Platescale/Spectral_platescale), cubic = -0.5)
+    sc                = size(Flux_Cal_Spectral, /dimensions)
+    padded_Flux_Cal_Spectral = REPLICATE(0., s[0], s[1])
+    padded_Flux_Cal_Spectral[s[0]/2,s[1]/2] = Flux_Cal_Spectral
+    Flux_Cal_Spectral = padded_Flux_Cal_Spectral             ;Pad this with zeros before we blur it                            ; "effective" seeing FWHM arcseconds
+    seeing_sigma      = effective_seeing / 2.355             ; convert FWHM to sigma
+    seeing_sigma      = seeing_sigma/Spectral_platescale     ; convert to Gaussian sigma in pixels
+    Hapke             = rot(Flux_Cal_Spectral, 203, MISSING=0., /interp)
+    Blurred_Hapke = convol(Hapke, GAUSSIAN_FUNCTION([seeing_sigma, seeing_sigma]), /EDGE_ZERO, /normalize)
     
     junk_s = max(Calib_img, loc_spec)
     spec_centroid = array_indices(Calib_img, loc_spec)
-    junk_h = max(visual_inspection, loc_hapke)
-    hapke_centroid = array_indices(visual_inspection, loc_hapke)
+    junk_h = max(Blurred_Hapke, loc_hapke)
+    hapke_centroid = array_indices(Blurred_Hapke, loc_hapke)
     
-    sh = size(visual_inspection, /dimensions)              ; Hapke image dimensions
+    sh = size(Blurred_Hapke, /dimensions)              ; Hapke image dimensions
     si = size(aligned_imaging_cube, /dimensions)           ; Imaging channel image dimensions
     
     ; Need to ratio the blurred Hapke image and the data-generated calibration image over the same to determine sensitivity
-      ;MR_per_DN = TOTAL(visual_inspection[hapke_centroid[0]-30:hapke_centroid[0]+30, $
+      ;MR_per_DN = TOTAL(Blurred_Hapke[hapke_centroid[0]-30:hapke_centroid[0]+30, $
       ;                                    hapke_centroid[1]-40:hapke_centroid[1]+40]) $  
       ;          / TOTAL(Calib_img[spec_centroid[0]-30:spec_centroid[0]+30, $
       ;                                     spec_centroid[1]-40:spec_centroid[1]+40]) ; this should work if seeing is correct, and yet...
                                            
-    MR_per_DN = max(visual_inspection[hapke_centroid[0]-30:hapke_centroid[0]+30, $
+    MR_per_DN = max(Blurred_Hapke[hapke_centroid[0]-30:hapke_centroid[0]+30, $
                                            hapke_centroid[1]-40:hapke_centroid[1]+40]) $
               / max(Calib_img[spec_centroid[0]-30:spec_centroid[0]+30, $
                                            spec_centroid[1]-40:spec_centroid[1]+40]) ; ... and yet this looks better
      
-    ; Assemble the imaging channel results 
+    ; Assemble the imaging channel results, expand them to match the spectral platescale 
       Imaging_Ch = total(aligned_imaging_cube, 3)                                                      & Lucky_Imaging_Ch = total(aligned_imaging_cube[*,*,ranked[0:cut_index]], 3)
       Imaging_Ch = rotate(Imaging_Ch, 7)                                                               & Lucky_Imaging_Ch = rotate(Lucky_Imaging_Ch, 7)
       Imaging_Ch = congrid(Imaging_Ch, si[0]/plate_scale_ratio, si[1]/plate_scale_ratio, cubic = -0.5) & Lucky_Imaging_Ch = congrid(Lucky_Imaging_Ch, si[0]/plate_scale_ratio, si[1]/plate_scale_ratio, cubic = -0.5)
@@ -762,36 +873,111 @@ stop
       cgimage, Na_D1_img*1000., minvalue = 0, maxvalue = 1200.
       cgColorbar, minrange = 0, maxrange = 1200., title = 'Na D1 (KiloRayleighs)'
     wset, 3
-      cgimage, visual_inspection, minvalue = 0, maxvalue = Continuum_colorbar_top ;Blurred_Hapke
+      cgimage, Blurred_Hapke, minvalue = 0, maxvalue = Continuum_colorbar_top ;Blurred_Hapke
     wset, 4
       cgimage, Imaging_Ch, /keep_aspect
       cgimage, Lucky_Imaging_Ch, /keep_aspect
     wset, 5
       cgimage, lucky_Calib_img, minvalue = 0, maxvalue = 40.
-      cgColorbar, minrange = 0., maxrange = Continuum_colorbar_top, title = cgsymbol('Sigma')+'1'+cgsymbol('Angstrom') +' at '+ strcompress(Flux_Cal_Wavelength)+cgsymbol('Angstrom') + ' (MegaRayleighs /'+ cgsymbol('Angstrom')+')'   
+      cgColorbar, minrange = 0., maxrange = Continuum_colorbar_top, title = cgsymbol('Sigma')+'1'+cgsymbol('Angstrom') +' at '+ strcompress(Flux_Cal_Wavelength)+cgsymbol('Angstrom') + ' (MegaRayleighs/'+ cgsymbol('Angstrom')+')'   
 
-    save, Lucky_Imaging_Ch, Imaging_Ch, Lucky_Calib_img, Calib_img, Lucky_Na_D2_img, Lucky_Na_D1_img, Na_D2_img, Na_D1_img, visual_inspection, Flux_Cal_Spectral, $
+    save, Lucky_Imaging_Ch, Imaging_Ch, Lucky_Calib_img, Calib_img, Lucky_Na_D2_img, Lucky_Na_D1_img, Na_D2_img, Na_D1_img, Hapke, Blurred_Hapke, Flux_Cal_Spectral, $
           filename = outdir + 'images_to_plot.sav' 
-          stop
 endif
 
 ; =====================================================================================================================
 ; Part 5 : Plot all images and and make movies of the exosphere.
 ; =====================================================================================================================
 if part eq 5 or part eq 99 then begin
-  if part ne 99 then restore, outdir + 'brightness.sav'            ; contains brightness, linewidth of both D2 & D1 lines
+  if part ne 99 then restore, outdir + 'images_to_plot.sav'            ; contains all images to be plotted
+
+  subframe = 50 ;pixels 
   
-  cgPS_Open, filename = outdir+'Mercury_Perkins.eps', /ENCAPSULATED, xsize = 6.5, ysize = 4
+  junk_s = max(Calib_img, loc_spectra)
+  spectra_centroid = array_indices(Calib_img, loc_spectra)
+  junk_i = max(Imaging_Ch, loc_imaging)
+  imaging_centroid = array_indices(Imaging_Ch, loc_imaging)
+  junk_h = max(Blurred_Hapke, loc_hapke)
+  hapke_centroid = array_indices(Blurred_Hapke, loc_hapke)
+  Calib_img  = Calib_img[spectra_centroid[0]-subframe:spectra_centroid[0]+subframe,spectra_centroid[1]-subframe:spectra_centroid[1]+subframe] 
+  Imaging_Ch = Imaging_Ch[imaging_centroid[0]-subframe:imaging_centroid[0]+subframe,imaging_centroid[1]-subframe:imaging_centroid[1]+subframe] 
+  Blurred_Hapke = Blurred_Hapke[hapke_centroid[0]-subframe:hapke_centroid[0]+subframe,hapke_centroid[1]-subframe:hapke_centroid[1]+subframe] 
+  
+  junk_s = max(Lucky_Calib_img, loc_spectra)
+  spectra_centroid = array_indices(Lucky_Calib_img, loc_spectra)
+  junk_i = max(Lucky_Imaging_Ch, loc_imaging)
+  imaging_centroid = array_indices(Lucky_Imaging_Ch, loc_imaging)
+  Lucky_Calib_img  = Lucky_Calib_img[spectra_centroid[0]-subframe:spectra_centroid[0]+subframe,spectra_centroid[1]-subframe:spectra_centroid[1]+subframe]
+  Lucky_Imaging_Ch = Lucky_Imaging_Ch[imaging_centroid[0]-subframe:imaging_centroid[0]+subframe,imaging_centroid[1]-subframe:imaging_centroid[1]+subframe]
+
+  cgPS_Open, filename = outdir+'Mercury_Perkins.eps', /ENCAPSULATED, xsize = 8, ysize = 6
+    !P.font=1
+    device, SET_FONT = 'Helvetica Bold', /TT_FONT
+    !p.charsize = 1.2
+    
+    yspace = 4.0*(!D.Y_CH_SIZE)/!D.Y_SIZE
+    pos = cgLayout([2,2])
+    thick = 4.
+    
+    P = pos[*,0]
+    cgimage, Calib_img, /keep_aspect, minvalue = 0, maxvalue = Continuum_colorbar_top, pos = P
+    p = [p[0], p[3]+yspace, p[2], p[3]+yspace+0.02]
+    cgColorbar, minrange = 0., maxrange = Continuum_colorbar_top, pos = P, $
+      title = cgsymbol('Sigma')+'1'+cgsymbol('Angstrom') +'Continuum at '+ strcompress(Flux_Cal_Wavelength)+cgsymbol('Angstrom') + ' (MegaRayleighs/'+ cgsymbol('Angstrom')+')' 
+      
+    P = pos[*,1]
+    cgimage, Imaging_Ch, /keep_aspect, minvalue = 0, pos = P, /noerase
+    p = [p[0], p[3]+yspace, p[2], p[3]+yspace+0.02]
+    cgColorbar, pos = P, $
+      title = 'Co-aligned Imaging Ch., matched to Spectral Ch. Platescale', color = 'blue' 
+      
+    P = pos[*,2]
+    cgimage, Blurred_Hapke, /keep_aspect, minvalue = 0, pos = P, /noerase
+    p = [p[0], p[3]+yspace, p[2], p[3]+yspace+0.02]
+    cgColorbar, pos = P, minrange = 0., maxrange = Continuum_colorbar_top, $
+      title = 'Hapke Model w/ Effective_Seeing = '+strcompress( effective_seeing, /remove_all)+' arcsec (MR/A)', color = 'red' 
+    
+    levels = findgen(5)/5.
+    P = pos[*,3]
+    cgcontour, Blurred_Hapke / max(Blurred_Hapke, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'red', aspect = 1
+    cgcontour, Imaging_Ch / max(Imaging_Ch, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'blue'
+    cgcontour, Calib_img / max(Calib_img, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'black'
+  cgPS_close
+  
+  cgPS_Open, filename = outdir+'Lucky_Mercury_Perkins.eps', /ENCAPSULATED, xsize = 8, ysize = 6
   !P.font=1
   device, SET_FONT = 'Helvetica Bold', /TT_FONT
   !p.charsize = 1.2
-  
-  pos = cgLayout([2,1], OXMargin=[5.8,1], OYMargin=[5,1], XGap=1, YGap=10)
+
+  yspace = 4.0*(!D.Y_CH_SIZE)/!D.Y_SIZE
+  pos = cgLayout([2,2])
   thick = 4.
-  
-  cgimage, lucky_Calib_img, ytitle = 'Sodium D!L2!N (kR)', xtitle = 'Tangent Altitude (km)', /ynozero, color = 'blue', $ ;Hacked brightness to match Sprague et al 2012
-    XStyle=9, Position=[POS[0,0], POS[1,0], POS[2,0], 0.52], Thick=thick, xthick = thick, ythick = thick, yr = [0.,1.5], xr = minmax(tangent_alt)
+
+  P = pos[*,0]
+  cgimage, Lucky_Calib_img, /keep_aspect, minvalue = 0, maxvalue = Continuum_colorbar_top, pos = P
+  p = [p[0], p[3]+yspace, p[2], p[3]+yspace+0.02]
+  cgColorbar, minrange = 0., maxrange = Continuum_colorbar_top, pos = P, $
+    title = cgsymbol('Sigma')+'1'+cgsymbol('Angstrom') +'Continuum at '+ strcompress(Flux_Cal_Wavelength)+cgsymbol('Angstrom') + ' (MegaRayleighs/'+ cgsymbol('Angstrom')+')'
+
+  P = pos[*,1]
+  cgimage, Lucky_Imaging_Ch, /keep_aspect, minvalue = 0, pos = P, /noerase
+  p = [p[0], p[3]+yspace, p[2], p[3]+yspace+0.02]
+  cgColorbar, pos = P, $
+    title = 'Co-aligned Imaging Ch., matched to Spectral Ch. Platescale', color = 'blue'
+
+  P = pos[*,2]
+  cgimage, Blurred_Hapke, /keep_aspect, minvalue = 0, pos = P, /noerase
+  p = [p[0], p[3]+yspace, p[2], p[3]+yspace+0.02]
+  cgColorbar, pos = P, minrange = 0., maxrange = Continuum_colorbar_top, $
+    title = 'Hapke Model w/ Effective_Seeing = '+strcompress( effective_seeing, /remove_all)+' arcsec (MR/A)', color = 'red'
+
+  levels = findgen(5)/5.
+  P = pos[*,3]
+  cgcontour, Blurred_Hapke / max(Blurred_Hapke, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'red', aspect = 1
+  cgcontour, Lucky_Imaging_Ch / max(Lucky_Imaging_Ch, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'blue'
+  cgcontour, Lucky_Calib_img / max(Lucky_Calib_img, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'black'
   cgPS_close
+
 endif
 stop
 
@@ -800,7 +986,7 @@ stop
 ;      ; now we need to align the Hapke frame to the Spectral channel's image extracted dn along in a 1 Angstrom band
 ;        ; start with the brightness centroid as a guess
 ;          match_hapke_to_calib                         = FLTARR(s[0],s[1])
-;          match_hapke_to_calib[0:sh[0]-1, 0:sh[1]-1]   = visual_inspection
+;          match_hapke_to_calib[0:sh[0]-1, 0:sh[1]-1]   = Blurred_Hapke
 ;          junk_s = max(weighted_Calib_img, loc_spec)
 ;          spec_centroid = array_indices(weighted_Calib_img, loc_spec)
 ;          junk_h = max(match_hapke_to_calib, loc_hapk)
