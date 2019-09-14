@@ -39,6 +39,7 @@ pro Surface_Flux_Calibration, Body = body, Timestamp = Timestamp, Wavelength = W
 ;    Surface_Flux_Calibration, Body = 'Mercury', Timestamp = 'June 25 2018 06:03', Wavelength = 5889., Make_picture = pretty
 ; REVISION HISTORY:
 ;    Written: C. Schmidt & L. Moore, 2018 (Boston University)
+;    Modified: 8/29/2019 - Fixed sign error in north pole position angle
 
 Viewpoint = 'Earth'
  ;'1994-01-30T16:07:03'
@@ -241,7 +242,7 @@ if keyword_set(make_picture) then begin
             CENTER_LATITUDE = lat_targ, CENTER_LONGITUDE = lon_targ, Location = [xlon_sun, xlat_sun], $
             SPHERE_RADIUS = re, /buffer)
         
-  ; Find the roation matrix to put sopoint at [0,0,r] and the body's north pole in the up direction
+  ; Find the rotation matrix to put sopoint at [0,0,r] and the body's north pole in the up direction
     cspice_twovec, sopoint, 3, [0.,0.,re], 2, mout
     cspice_mxv, mout, sopoint, projected_sopoint
     cspice_mxv, mout, sspoint, projected_sspoint      
@@ -256,6 +257,9 @@ if keyword_set(make_picture) then begin
   angle            = cspice_vsep([-1.d,0.d,0.d], [ss,0.d])
   cropped_I_over_F = I_over_F[npix/2-radius:npix/2+radius-1, npix/2-radius:npix/2+radius-1] ;Hack, not sure about minus 1s!
   rotated_Hapke    = rot(cropped_I_over_F, angle*!radeg, MISSING = 0., /interp)
+  MR_per_A         = rot(MR_per_A, angle*!radeg, MISSING = 0., /interp)
+  R_per_A          = rot(R_per_A, angle*!radeg, MISSING = 0., /interp)
+  
   window, 3, xs = 2*radius, ys = 2*radius
   tv, bytscl(rotated_Hapke)
   
@@ -287,11 +291,11 @@ if keyword_set(make_picture) then begin
       Delta_RA      = Pole_ra - ra
       Delta_Dec     = Pole_Dec - dec
       theta         = sqrt((Delta_RA*cos(Dec))^2.D + Delta_Dec^2.D)
-      PA            = Acos(Delta_Dec / theta)
+      PA            = signum(Delta_RA)*Acos(Delta_Dec / theta)
       print, 'Rotating by North Pole Position Angle (CCW, E of N) = ', PA / cspice_rpd()
-      Make_picture  = rot(Make_picture, -PA / cspice_rpd(), /interp)
-      MR_per_A      = rot(MR_per_A, -PA / cspice_rpd(), /interp)
-      R_per_A       = rot(R_per_A, -PA / cspice_rpd(), /interp)
+      Make_picture  = rot(Make_picture, -PA / cspice_rpd(), /interp, missing = 0.) ; IDL rot is Clockwise ---> -PA
+      MR_per_A      = rot(MR_per_A, -PA / cspice_rpd(), /interp, missing = 0.)     ; IDL rot is Clockwise ---> -PA
+      R_per_A       = rot(R_per_A, -PA / cspice_rpd(), /interp, missing = 0.)      ; IDL rot is Clockwise ---> -PA
   endif
 window, 4, xs = 2*radius, ys = 2*radius
 tv, bytscl(Make_picture)
