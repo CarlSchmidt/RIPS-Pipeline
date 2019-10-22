@@ -38,7 +38,7 @@ END
 ;    return, P[0]*gauss_smooth(shifted, p[3], /EDGE_TRUNCATE) + P[1] + P[4]*findgen(n_elements(x))
 ;end
 
-pro RIPS_Mercury_Broken, PART=part, NIGHT=night, Telescope = telescope
+pro RIPS_Mercury_Na, PART=part, NIGHT=night, Telescope = telescope
   Common Seeing_Estimate, A, B, Spectral_platescale, Imaging_platescale, x_fine, y_fine, Seeing_Est_Rebin_Factor
   ; *********************************************************************************************************************
   ; *********************************************************************************************************************
@@ -1615,7 +1615,7 @@ if part eq 7 or part eq 99 then begin
       cgarrow, 0.76, 0.8075, 0.795, 0.8075, HSIZE = 0., color = 'lime green', /NORMAL, thick =2.
       cgarrow, 0.76, 0.83, 0.795, 0.83, HSIZE = 0., color = 'black', /NORMAL, thick =2.
   cgPS_close
-stop
+
   ;-------------------------------------------- Find the g-value (photon scattering rate) ----------------------------------------------
     READCOL, strcompress('C:\IDL\Generic Model V2\read_write\killen_5890_5900.txt'), Format='A,A', wavelength, intensity, /SILENT  ;sodium d lines
     start=where(wavelength eq '5890.000')
@@ -1634,11 +1634,13 @@ stop
     print, 'Photon scattering rate ~'+string(g) +' photons/atom/s'    
 
   ;---------------------------------PSF deconvolution----------------------------------------------------------
-    maxiter = 1 ;fast debug only
-    ;maxIter           = 30 ;looks good, not overkill!
+    ;maxiter = 1 ;fast debug only
+    if night eq '15' then maxIter           = 100 ; settled on this for simplicity after much fiddling
+    if night eq '12' then maxIter           = 50 ; settled on this for simplicity after much fiddling
     orig              = Na_img  
-    seeing_sigma      = effective_seeing / (2.0*sqrt(2.0*alog(2.)))      ; convert FWHM to sigma
-    seeing_sigma      = seeing_sigma/Imaging_platescale                  ; convert to Gaussian sigma in pixels
+    multipliers       = 0
+    seeing_sigma      = mean_seeing / (2.0*sqrt(2.0*alog(2.)))      ; convert FWHM to sigma
+    seeing_sigma      = seeing_sigma/spectral_platescale            ; convert to Gaussian sigma in pixels
     PSF_2D            = GAUSSIAN_FUNCTION([seeing_sigma, seeing_sigma])  
     PSF_2D            = PSF_2D/total(PSF_2D)
       
@@ -1648,8 +1650,10 @@ stop
     j = 0
     while (error[j] gt 1.d-3 and j lt maxIter) do begin
       j = j + 1
-      max_likelihood, orig, PSF_2D, deconv, /gaussian, ft_psf=psf_ft
-      ;res = convolve(deconv, PSF_2D)
+      max_likelihood, orig, PSF_2D, deconv, /gaussian, ft_psf=psf_ft ;best w/ 100 iter
+      ;max_likelihood, orig, PSF_2D, deconv, ft_psf=psf_ft
+      ;Max_Entropy, orig, PSF_2D, deconv, multipliers, FT_PSF=psf_ft
+
       res = convol(deconv, PSF_2D, /EDGE_ZERO, /normalize, /nan)
       error[j] = total((res-deconv_orig)^2) / (1.d0*100.*100.)
       print, 'Iter: ', j, ' - Error : ', error[j]
@@ -1665,8 +1669,9 @@ stop
     Na_img_Deconv = deconv * 1.e12/g[0]                   ; convert to column density in atoms * cm^-2
     Na_img        = Na_img * 1.e12/g[0]                   ; convert to column density in atoms * cm^-2
      
-    orig = Calib_img
+    orig = Lucky_Calib_img
     error = fltarr(maxIter+1)
+    multipliers = 0
     deconv_old = orig
     deconv_orig = orig
     error[0] = 1.d0
@@ -1674,6 +1679,9 @@ stop
     while (error[j] gt 1.d-3 and j lt maxIter) do begin
       j = j + 1
       max_likelihood, orig, PSF_2D, deconv, /gaussian, ft_psf=psf_ft
+      ;max_likelihood, orig, PSF_2D, deconv, ft_psf=psf_ft
+      ;Max_Entropy, orig, PSF_2D, deconv, multipliers, FT_PSF=psf_ft
+           
       res = convol(deconv, PSF_2D, /EDGE_ZERO, /normalize, /nan)
       error[j] = total((res-deconv_orig)^2) / (1.d0*100.*100.)
       print, 'Iter: ', j, ' - Error : ', error[j]
@@ -1683,10 +1691,14 @@ stop
           print, 'Error is increasing. Going back to the previous image...'
         endif else begin
           deconv_old = deconv
+          print, 'Correlation w/ Hapke = ', max(CORREL_IMAGES( Spectra_Hapke, deconv ))
         endelse
       endif
     endwhile
     Calib_img_deconv = deconv
+    ;test_PSF = GAUSSIAN_FUNCTION([(4.08/3.)*seeing_sigma, (4.08/3.)*seeing_sigma])
+    ;test_PSF = test_PSF[0:99, 0:99]
+    ;Calib_img_deconv = image_deconvolve(orig, test_psf, sqrt(abs(orig))+5., mask = where(orig le 0.5), /positive) ;, guess = Spectra_Hapke
 
     window, 0, xs = 400, ys = 400
     cgimage, Na_img, /keep_aspect
@@ -1697,14 +1709,18 @@ stop
     cgimage, Calib_img, /keep_aspect
     window, 3, xs = 400, ys = 400
     cgimage, Calib_img_deconv
+    window, 4, xs = 400, ys = 400, xpos = 400, ypos = 600
+    cgimage, Spectra_Hapke
     
     cgPS_Open, filename = outdir+body+'_'+Telescope+'_'+night+'_Deconvolved.eps', /ENCAPSULATED, xsize = 6, ysize = 6
       !P.font=1
       device, SET_FONT = 'Helvetica Bold', /TT_FONT
       
       axis_format = {XTICKFORMAT:"(A1)", YTICKFORMAT:"(A1)"}   
-      ;cgimage, Calib_img_deconv, /axes, /keep_aspect, axkeywords = axis_format, title = strmid(UTC,0,10) + ' ' + strmid(UTC,11,5) + ' --- ' + string(effective_seeing, format = '(F3.1)')+'" PSF Deconvolved'
-      cgimage, Spectra_Hapke, /axes, /keep_aspect, axkeywords = axis_format, title = strmid(UTC,0,10) + ' ' + strmid(UTC,11,5) + ' --- ' + string(effective_seeing, format = '(F3.1)')+'" PSF Deconvolved'
+      cgimage, Calib_img_deconv, /axes, /keep_aspect, axkeywords = axis_format, title = strmid(UTC,0,10) + ' ' + strmid(UTC,11,5) + ' --- ' + string(mean_seeing, format = '(F3.1)')+'" PSF Deconvolved'
+      ;cgimage, Spectra_Hapke, /axes, /keep_aspect, axkeywords = axis_format, title = strmid(UTC,0,10) + ' ' + strmid(UTC,11,5) + ' --- ' + string(mean_seeing, format = '(F3.1)')+'" PSF Deconvolved'
+      ;cgimage, PSF_2D, /noerase, /keep_aspect, position =  [0.0, 0.0, float(N_elements(PSF_2D[0,*])) / float(N_elements(Calib_img_deconv[0,*])), float(N_elements(PSF_2D[1,*])) / float(N_elements(Calib_img_deconv[1,*]))]
+      
       lat_contours = indgen(17)*10 - 80                                  ; every 10 deg lat
       lon_contours = indgen(24)*15                                       ; every 15 deg lon
       C_LABELS_LAT = replicate(1, N_elements(lat_contours))
@@ -1712,7 +1728,14 @@ stop
       C_LABELS_LAT[indgen(N_elements(lat_contours)/2)*2 -1] = 0
       C_LABELS_LON[indgen(N_elements(lon_contours)/2)*2] = 0
       C_LABELS_LON[where( (lon_contours gt lon_se + 90.) or (lon_contours lt lon_se - 90.), /NULL )] = 0
-      
+      if night eq '15' then begin
+        C_LABELS_LON[[17, 19]] = 0 ;these contour labels don't look good on this date
+      endif
+      if night eq '12' then begin
+        C_LABELS_LON[*] = 0 ;these contour labels don't look good on this date
+        C_LABELS_LON[[23]] = 1 ;these contour labels look good on this date
+      endif
+           
       cgcontour, ob.lat, /onimage, levels = lat_contours, C_LABELS = C_LABELS_LAT, color = 'green', THICK = .5;, C_Spacing = 5
       cgcontour, ob.lon, /onimage, levels = lon_contours, C_LABELS = C_LABELS_LON, color = 'green', THICK = .5;, C_Spacing = 5 ;'snow'
       
@@ -1722,9 +1745,14 @@ stop
       cold_pole_270[where((cold_pole_270 gt 280) or (cold_pole_270 lt 260))] = !values.F_NaN
       cgcontour, cold_pole_90, /onimage, levels = [90], color = 'Blue'                        ; marks "cold-pole" longitudes, Cassidy et al. 2016
       cgcontour, cold_pole_270, /onimage, levels = [270], color = 'Blue'                      ; marks "cold-pole" longitudes, Cassidy et al. 2016
-      LEVELS = [4,8,12,16,20,24,28]
-      ;LEVELS = (indgen(20)+1)*2
-      cgcontour, Na_img_deconv/1.e10, /onimage, color = 'orange', levels = LEVELS  ; plot column density x 10^10 cm^-2 
+      ;LEVELS = [4,8,12,16,20,24,28]
+      LEVELS = (indgen(20)+1)*2.5
+      
+      if telescope eq 'AEOS' then begin
+        cgcontour, smooth(Na_img_deconv,8)/1.e10, /onimage, color = 'orange', levels = LEVELS  ; plot column density x 10^10 cm^-2 SMOOTH SMOOTH SMOOTH!!
+      endif else begin
+        cgcontour, Na_img_deconv/1.e10, /onimage, color = 'orange', levels = LEVELS  ; plot column density x 10^10 cm^-2 
+      endelse  
    cgPS_Close   
 endif
 print, 'Run time = ',  (SYSTIME(/SECONDS) - Start_time) / 60, ' minutes'
