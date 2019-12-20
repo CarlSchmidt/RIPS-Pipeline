@@ -539,6 +539,8 @@ if part eq 0 or part eq 99 then begin
     if N_elements(ss eq 3) then Spectra_sky_cube = mean(Spectra_sky_cube, dimension=3)
     MWRFITS, imaging_sky_cube, outdir + 'imaging_sky_cube.fits', /create, /silent
     MWRFITS, spectra_sky_cube, outdir + 'spectra_sky_cube.fits', /create, /silent
+    raw_data_cube = temporary(cube)
+    MWRFITS, raw_data_cube, outdir + 'raw_data_cube.fits', /create, /silent
   beep
 endif 
 
@@ -1256,7 +1258,7 @@ if part eq 6 or part eq 99 then begin
     sh = size(Blurred_Hapke, /dimensions)                            ; Hapke image dimensions
     si = size(aligned_imaging_cube, /dimensions)                     ; Imaging channel image dimensions
 
-  ; Put in the stripes long the slit with a width == line spread function from arc frames == spactral channel's "point spread function" 
+  ; Put in the stripes long the slit with a width == line spread function from arc frames == spectral channel's "point spread function" 
     PSF_Size        = N_elements(PSF_1D)
     spatial_weights = rebin(PSF_1D, psf_size, s[1])           ; bin it into 2D to use in the weighting scheme of the next part 
     home            = fix(round([s[0]/2.,s[1]/2.]))
@@ -1549,52 +1551,79 @@ if part eq 7 or part eq 99 then begin
       p[0] = p[0] - .01
       p[2] = p[2] - .01
       levels = (findgen(5) + 1) /5.
-      cgcontour, Blurred_Hapke / max(Blurred_Hapke, /NaN), levels=levels, label=0, /noerase, pos = P, color = 'red', aspect = 1, thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)"
-      cgcontour, Imaging_Ch / max(Imaging_Ch, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'black', thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)", c_LINESTYLE = [1,1,1,1,1]     
-      cgcontour, smooth(Calib_img / max(Calib_img, /NaN), smooth_Final, /edge_truncate), levels=levels, label=0, pos = P, /noerase, color = 'lime green', thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)", c_LINESTYLE = [1,1,1,1,1]
+      cgcontour, Blurred_Hapke / max(Blurred_Hapke, /NaN), levels=levels, label=0, /noerase, pos = P, color = 'black', aspect = 1, thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)"
+      cgcontour, Imaging_Ch / max(Imaging_Ch, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'lime green', thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)", c_LINESTYLE = [1,1,1,1,1]     
+      cgcontour, smooth(Calib_img / max(Calib_img, /NaN), smooth_Final, /edge_truncate), levels=levels, label=0, pos = P, /noerase, color = 'red', thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)", c_LINESTYLE = [1,1,1,1,1]
       ;cgcontour, spectra_hapke / max(spectra_hapke, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'green', thick = 1., XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)"
       if keyword_set(plot_lucky_Na) then begin 
-        cgcontour, Lucky_Imaging_Ch / max(Lucky_Imaging_Ch, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'black', thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)" 
-        cgcontour, smooth(Lucky_Calib_img / max(Lucky_Calib_img, /NaN), smooth_Final, /edge_truncate), levels=levels, label=0, pos = P, /noerase, color = 'lime green', thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)"
+        cgcontour, Lucky_Imaging_Ch / max(Lucky_Imaging_Ch, /NaN), levels=levels, label=0, pos = P, /noerase, color = 'lime green', thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)" 
+        cgcontour, smooth(Lucky_Calib_img / max(Lucky_Calib_img, /NaN), smooth_Final, /edge_truncate), levels=levels, label=0, pos = P, /noerase, color = 'red', thick = 2.0, XTICKFORMAT = "(A1)", YTICKFORMAT= "(A1)"
       endif
+
+    if keyword_set(plot_lucky_Na) then Na_img = (Lucky_Na_D1_img + Lucky_Na_D2_img) else Na_img = (Na_D1_img + Na_D2_img)
 
     ; Bottom Left
       P = pos[*,2]
+      axis_format = {XTICKFORMAT:"(A1)", YTICKFORMAT:"(A1)", Color:'white'} ;can't seem to get rid of the axis
       if keyword_set(plot_lucky_Na) then begin 
-        cgimage, smooth(Lucky_Calib_img, smooth_Final, /edge_truncate, /Nan), /keep_aspect, pos = P, /noerase, minvalue = 0., maxvalue = max(smooth(Lucky_Calib_img, smooth_Final, /edge_truncate)) 
+        cgimage, smooth(Lucky_Calib_img, smooth_Final, /edge_truncate, /Nan), /keep_aspect, pos = P, /noerase, minvalue = 0., maxvalue = max(smooth(Lucky_Calib_img, smooth_Final, /edge_truncate)), $
+                 /axes, axkeywords = axis_format
         case side of 
-          'left':  p = [p[0] + xspace+0.01, p[1]+.02, p[0]+xspace+0.02, p[3]-.02]
-          'right': p = [p[2] - (xspace-0.03), p[1]+.02, p[2] - (xspace-0.04), p[3]-.02]
+          'left':  p_CB = [p[0] + xspace+0.02, p[1]+.02, p[0]+xspace+0.03, p[3]-.02]
+          'right': p_CB = [p[2] - (xspace-0.03), p[1]+.02, p[2] - (xspace-0.04), p[3]-.02]
         endcase
-        cgColorbar, pos = P, minrange = 0., maxrange = max(Lucky_Calib_img),  /VERTICAL, $
+        
+        ; overlay the smoothed Na contours
+        cgcontour, smooth(Na_img / max(Na_img, /NaN), smooth_Final, /edge_truncate), /onimage, color='black', pos = P, levels=levels, C_CHARSIZE=2.4, $
+          C_annotation = string(levels)+' MR/'+cgsymbol('Angstrom'), C_LABELS=[1,1,1,1,1], thick = 0.5, axiscolor = 'white' ;can't seem to get rid of the axis, oh well!
+        
+        cgColorbar, pos = P_CB, minrange = 0., maxrange = max(Lucky_Calib_img),  /VERTICAL, $
           title = 'Continuum at '+ string(Flux_Cal_Wavelength, format = '(I5)') + cgsymbol('Angstrom') + ' (MR/'+ cgsymbol('Angstrom')+')'
       endif else begin   
         cgimage, smooth(Calib_img, smooth_Final, /edge_truncate), /keep_aspect, pos = P, /noerase, minvalue = 0., maxvalue = max(smooth(Calib_img, smooth_Final, /edge_truncate)) 
         case side of 
-          'left':  p = [p[0] + xspace+0.01, p[1]+.02, p[0]+xspace+0.02, p[3]-.02]
-          'right': p = [p[2] - (xspace-0.03), p[1]+.02, p[2] - (xspace-0.04), p[3]-.02]
+          'left':  p_CB = [p[0] + xspace+0.01, p[1]+.02, p[0]+xspace+0.02, p[3]-.02]
+          'right': p_CB = [p[2] - (xspace-0.03), p[1]+.02, p[2] - (xspace-0.04), p[3]-.02]
         endcase
-        cgColorbar, pos = P, minrange = 0., maxrange = max(Calib_img),  /VERTICAL, $
+        cgColorbar, pos = P_CB, minrange = 0., maxrange = max(Calib_img),  /VERTICAL, $
           title = 'Continuum at '+ string(Flux_Cal_Wavelength, format = '(I5)') + cgsymbol('Angstrom') + ' (MR/'+ cgsymbol('Angstrom')+')'
       end
-  
+   
     ; Bottom Right
       P = pos[*,3]
       p[0] = p[0] - .01
       p[2] = p[2] - .01
       loadct, 3
       axis_format = {XTICKFORMAT:"(A1)", YTICKFORMAT:"(A1)"}
-      if keyword_set(plot_lucky_Na) then Na_img = (Lucky_Na_D1_img + Lucky_Na_D2_img) else Na_img = (Na_D1_img + Na_D2_img)
-        cgimage, smooth(Na_img, smooth_Final, /edge_truncate), /keep_aspect, minvalue = 0, maxvalue = max(smooth(Na_img, smooth_Final, /edge_truncate)), pos = P, /noerase, /axes, axkeywords = axis_format
+      
+      Hapke_flat = Blurred_Hapke / Lucky_Calib_img
+      Hapke_flat[where(finite(Hapke_flat, /INFINITY))] = 0.
+      Hapke_flat[where(Hapke_flat gt 2.)] = 0.
+      
+      valid_pixels = where(Lucky_Calib_img ne 0.)
+      Normalized_Imaging_Ch = Lucky_Imaging_Ch * total(Lucky_Calib_img[valid_pixels], /NAN) / total(Lucky_Imaging_Ch[valid_pixels], /NAN)
+      Imaging_Ch_flat = Normalized_Imaging_Ch / Lucky_Calib_img
+      Imaging_Ch_flat[where(finite(Imaging_Ch_flat, /INFINITY))] = 0.
+      Imaging_Ch_flat[where(Imaging_Ch_flat gt 2.)] = 0.
+      
+        ;cgimage, smooth(Na_img, smooth_Final, /edge_truncate), /keep_aspect, minvalue = 0, maxvalue = max(smooth(Na_img, smooth_Final, /edge_truncate)), pos = P, /noerase, $
+        ;cgimage, Na_img*Hapke_flat, /keep_aspect, minvalue = 0, maxvalue = max(Na_img*Hapke_flat), pos = P, /noerase, $
+        ;cgimage, smooth(Na_img*Hapke_flat, smooth_Final, /edge_truncate), /keep_aspect, minvalue = 0, maxvalue = max(smooth(Na_img*Hapke_flat, smooth_Final, /edge_truncate)), pos = P, /noerase, $
+        ;        /axes, axkeywords = axis_format
+        cgimage, smooth(Na_img*Imaging_Ch_flat, smooth_Final, /edge_truncate), /keep_aspect, minvalue = 0, maxvalue = max(smooth(Na_img*Imaging_Ch_flat, smooth_Final, /edge_truncate)), pos = P, /noerase, $
+                /axes, axkeywords = axis_format        
+                
       if keyword_set(plot_lucky_Na) then begin
-        cgcontour, smooth(Lucky_Calib_img / max(Lucky_Calib_img, /NaN), smooth_Final, /edge_truncate), /onimage, color='green', pos = P, levels=levels, C_CHARSIZE=2.4, $
-        C_annotation = string(levels)+' MR/'+cgsymbol('Angstrom'), C_LABELS=[1,1,1,1,1], thick = 0.5
+        ;cgcontour, smooth(Lucky_Calib_img / max(Lucky_Calib_img, /NaN), smooth_Final, /edge_truncate), /onimage, color='green', pos = P, levels=levels, C_CHARSIZE=2.4, $
+        ;cgcontour, smooth(Blurred_Hapke / max(Blurred_Hapke, /NaN), smooth_Final, /edge_truncate), /onimage, color='lime green', pos = P, levels=levels, C_CHARSIZE=2.4, $
+        cgcontour, smooth(Lucky_Imaging_Ch / max(Lucky_Imaging_Ch, /NaN), smooth_Final, /edge_truncate), /onimage, color='lime green', pos = P, levels=levels, C_CHARSIZE=2.4, $
+          C_annotation = string(levels)+' MR/'+cgsymbol('Angstrom'), C_LABELS=[1,1,1,1,1], thick = 0.75
       endif else begin    
-        cgcontour, smooth(Calib_img / max(Calib_img, /NaN), smooth_Final, /edge_truncate), /onimage, pos = P, levels=levels, C_CHARSIZE=2.4, color='green', $
+        cgcontour, smooth(Calib_img / max(Calib_img, /NaN), smooth_Final, /edge_truncate), /onimage, pos = P, levels=levels, C_CHARSIZE=2.4, color='lime green', $
         C_annotation = string(levels)+' MR/'+cgsymbol('Angstrom'), C_LABELS=[1,1,1,1,1], thick = 0.5
       endelse  
       case side of 
-        'left':  p = [p[0] + xspace+0.03, p[1]+.02, p[0]+xspace+0.04, p[3]-.02]
+        'left':  p = [p[0] + xspace+0.02, p[1]+.02, p[0]+xspace+0.03, p[3]-.02]
         'right': p = [p[2] - (xspace-0.03), p[1]+.02, p[2] - (xspace-0.04), p[3]-.02]
       endcase
       cgColorbar, minrange = 0., maxrange = max(Na_img), pos = P, /VERTICAL, title = 'Sodium D1 + D2 (MR)', color = 'white'
@@ -1607,13 +1636,13 @@ if part eq 7 or part eq 99 then begin
       Endcase
       cgText, 0.5, 0.9, 'RIPS --- ' + strmid(UTC,0,10) + ' ' + strmid(UTC,11,5) + ' --- True Anomaly '+ string(True_Anomaly, format=format)+ '!U'+cgsymbol('deg')+'!U', ALIGNMENT=0.5, /NORMAL, charsize = 1.9 
       cgText, 0.09, 0.845, 'Reflectance Model', /NORMAL, charsize = 0.9, color = 'white'
-      cgText, 0.51, 0.845, 'Model w/ Effective Seeing = '+string(mean_seeing, format = '(F3.1)')+'"', /NORMAL, charsize = 0.9, color = 'red'
-      cgText, 0.51, 0.8225, 'Co-Aligned Imaging       100%        '+strcompress(string(100*Lucky_fraction, format = '(I)'))+'%', /NORMAL, charsize = 0.9, color = 'black'
-      cgText, 0.51, 0.80,   'Co-Aligned Spectra       100%        '+strcompress(string(100*Lucky_fraction, format = '(I)'))+'%', /NORMAL, charsize = 0.9, color = 'lime green'
-      cgarrow, 0.68, 0.8075, 0.705, 0.8075, HSIZE = 0., color = 'lime green', /NORMAL, thick =2., linestyle = 1
-      cgarrow, 0.68, 0.83, 0.705, 0.83, HSIZE = 0., color = 'black', /NORMAL, thick =2., linestyle = 1
-      cgarrow, 0.76, 0.8075, 0.795, 0.8075, HSIZE = 0., color = 'lime green', /NORMAL, thick =2.
-      cgarrow, 0.76, 0.83, 0.795, 0.83, HSIZE = 0., color = 'black', /NORMAL, thick =2.
+      cgText, 0.51, 0.845, 'Model w/ Effective Seeing = '+string(mean_seeing, format = '(F3.1)')+'"', /NORMAL, charsize = 0.9, color = 'black'
+      cgText, 0.51, 0.8225, 'Co-Aligned Imaging       100%        '+strcompress(string(100*Lucky_fraction, format = '(I)'))+'%', /NORMAL, charsize = 0.9, color = 'lime green'
+      cgText, 0.51, 0.80,   'Co-Aligned Spectra       100%        '+strcompress(string(100*Lucky_fraction, format = '(I)'))+'%', /NORMAL, charsize = 0.9, color = 'red'
+      cgarrow, 0.68, 0.8075, 0.705, 0.8075, HSIZE = 0., color = 'red', /NORMAL, thick =2., linestyle = 1
+      cgarrow, 0.68, 0.83, 0.705, 0.83, HSIZE = 0., color = 'lime green', /NORMAL, thick =2., linestyle = 1
+      cgarrow, 0.76, 0.8075, 0.795, 0.8075, HSIZE = 0., color = 'red', /NORMAL, thick =2.
+      cgarrow, 0.76, 0.83, 0.795, 0.83, HSIZE = 0., color = 'lime green', /NORMAL, thick =2.
   cgPS_close
 
   ;-------------------------------------------- Find the g-value (photon scattering rate) ----------------------------------------------
@@ -1635,53 +1664,34 @@ if part eq 7 or part eq 99 then begin
 
   ;---------------------------------PSF deconvolution----------------------------------------------------------
     ;maxiter = 1 ;fast debug only
-    if night eq '15' then maxIter           = 100 ; settled on this for simplicity after much fiddling
-    if night eq '12' then maxIter           = 50 ; settled on this for simplicity after much fiddling
-    orig              = Na_img  
-    multipliers       = 0
+    ;if night eq '15' then maxIter           = 100 ; settled on this for simplicity after much fiddling
+    ;if night eq '12' then maxIter           = 50 ; settled on this for simplicity after much fiddling
+    if night eq '12' then maxIter           = 9 ; quick test
+    if night eq '15' then maxIter           = 17 ; quick test
+    if night eq '25' then maxIter           = 10 ; quick test
+    
     seeing_sigma      = mean_seeing / (2.0*sqrt(2.0*alog(2.)))      ; convert FWHM to sigma
     seeing_sigma      = seeing_sigma/spectral_platescale            ; convert to Gaussian sigma in pixels
-    PSF_2D            = GAUSSIAN_FUNCTION([seeing_sigma, seeing_sigma])  
+    PSF_2D            = GAUSSIAN_FUNCTION([seeing_sigma, seeing_sigma])
     PSF_2D            = PSF_2D/total(PSF_2D)
-      
-    error      = fltarr(maxIter+1)
-    deconv_old = orig & deconv_orig = orig
-    error[0]   = 1.d0
-    j = 0
-    while (error[j] gt 1.d-3 and j lt maxIter) do begin
-      j = j + 1
-      max_likelihood, orig, PSF_2D, deconv, /gaussian, ft_psf=psf_ft ;best w/ 100 iter
-      ;max_likelihood, orig, PSF_2D, deconv, ft_psf=psf_ft
-      ;Max_Entropy, orig, PSF_2D, deconv, multipliers, FT_PSF=psf_ft
-
-      res = convol(deconv, PSF_2D, /EDGE_ZERO, /normalize, /nan)
-      error[j] = total((res-deconv_orig)^2) / (1.d0*100.*100.)
-      print, 'Iter: ', j, ' - Error : ', error[j]
-      if (j ne 0) then begin
-        if (error[j] gt error[j-1]) then begin
-          deconv = deconv_old
-          print, 'Error is increasing. Going back to the previous image...'
-        endif else begin
-          deconv_old = deconv
-        endelse
-      endif
-    endwhile
-    Na_img_Deconv = deconv * 1.e12/g[0]                   ; convert to column density in atoms * cm^-2
-    Na_img        = Na_img * 1.e12/g[0]                   ; convert to column density in atoms * cm^-2
-     
-    orig = Lucky_Calib_img
+    PSF_size          = size(PSF_2D, /dim)
+    s                 = size(Lucky_Imaging_Ch, /dimensions)
+    
+    ;orig = blurred_hapke
+    orig = Lucky_Imaging_Ch
     error = fltarr(maxIter+1)
     multipliers = 0
     deconv_old = orig
     deconv_orig = orig
     error[0] = 1.d0
     j = 0
+    window, 0, xs = 400, ys = 400 & loadct, 0
     while (error[j] gt 1.d-3 and j lt maxIter) do begin
       j = j + 1
       max_likelihood, orig, PSF_2D, deconv, /gaussian, ft_psf=psf_ft
       ;max_likelihood, orig, PSF_2D, deconv, ft_psf=psf_ft
       ;Max_Entropy, orig, PSF_2D, deconv, multipliers, FT_PSF=psf_ft
-           
+
       res = convol(deconv, PSF_2D, /EDGE_ZERO, /normalize, /nan)
       error[j] = total((res-deconv_orig)^2) / (1.d0*100.*100.)
       print, 'Iter: ', j, ' - Error : ', error[j]
@@ -1691,33 +1701,73 @@ if part eq 7 or part eq 99 then begin
           print, 'Error is increasing. Going back to the previous image...'
         endif else begin
           deconv_old = deconv
+          cgimage, deconv, /keep_aspect
           print, 'Correlation w/ Hapke = ', max(CORREL_IMAGES( Spectra_Hapke, deconv ))
         endelse
       endif
+      if night eq '15' then wait, 0.2
     endwhile
-    Calib_img_deconv = deconv
+    Lucky_Imaging_Ch_deconv = deconv
     ;test_PSF = GAUSSIAN_FUNCTION([(4.08/3.)*seeing_sigma, (4.08/3.)*seeing_sigma])
     ;test_PSF = test_PSF[0:99, 0:99]
     ;Calib_img_deconv = image_deconvolve(orig, test_psf, sqrt(abs(orig))+5., mask = where(orig le 0.5), /positive) ;, guess = Spectra_Hapke
 
+    orig              = Na_img * Imaging_Ch_flat
+    multipliers       = 0
+    error      = fltarr(maxIter+1)
+    deconv_old = orig & deconv_orig = orig
+    error[0]   = 1.d0
+    j = 0
+    window, 1, xs = 400, ys = 400 & cgloadct, ct
+    while (error[j] gt 1.d-3 and j lt maxIter) do begin
+      j = j + 1
+      max_likelihood, orig, PSF_2D, deconv, /gaussian, ft_psf=psf_ft ;best w/ 17 iter (perkins)
+      ;max_likelihood, orig, PSF_2D, deconv, ft_psf=psf_ft            ;best w/ 4 iter
+      ;Max_Entropy, orig, PSF_2D, deconv, multipliers, FT_PSF=psf_ft
+
+      res = convol(deconv, PSF_2D, /EDGE_ZERO, /normalize, /nan)
+      error[j] = total((res-deconv_orig)^2) / (1.d0*100.*100.)
+      print, 'Iter: ', j, ' - Error : ', error[j]
+      if (j ne 0) then begin
+        if (error[j] gt error[j-1]) then begin
+          deconv = deconv_old
+          print, 'Error is increasing. Going back to the previous image...'
+        endif else begin
+          deconv_old = deconv
+          cgimage, deconv, /keep_aspect
+        endelse
+      endif
+      if night eq '15' then wait, 0.2
+    endwhile
+    Na_img_Deconv = deconv * 1.e12/g[0]                   ; convert to column density in atoms * cm^-2
+    Na_img        = Na_img * 1.e12/g[0]                   ; convert to column density in atoms * cm^-2
+
     window, 0, xs = 400, ys = 400
-    cgimage, Na_img, /keep_aspect
+    cgimage, Na_img*Imaging_Ch_flat, /keep_aspect
     window, 1, xs = 400, ys = 400
     cgimage, Na_img_deconv, /keep_aspect
     loadct, 0
     window, 2, xs = 400, ys = 400
-    cgimage, Calib_img, /keep_aspect
+    cgimage, Lucky_Imaging_Ch, /keep_aspect
     window, 3, xs = 400, ys = 400
-    cgimage, Calib_img_deconv
-    window, 4, xs = 400, ys = 400, xpos = 400, ypos = 600
+    cgimage, Lucky_Imaging_Ch_deconv
+    window, 4, xs = 400, ys = 400, xpos = 400, ypos = 00
     cgimage, Spectra_Hapke
+    window, 5, xs = 400, ys = 400, xpos = 400, ypos = 600
+    cgimage, Blurred_Hapke
+    window, 6, xs = 400, ys = 400, xpos = 800, ypos = 00
+    tv,bytscl(congrid(PSF_2D, 400*psf_size[0]/s[0], 400*psf_size[1]/s[1]))
     
+    WRITEFITS, outdir + 'Deconv_PSF_2D'+'_'+night+'.fits', PSF_2D
+    WRITEFITS, outdir + 'Deconv_Calib'+'_'+night+'.fits', Imaging_Ch
+    WRITEFITS, outdir + 'Deconv_Na'+'_'+night+'.fits', Na_img
+
     cgPS_Open, filename = outdir+body+'_'+Telescope+'_'+night+'_Deconvolved.eps', /ENCAPSULATED, xsize = 6, ysize = 6
       !P.font=1
       device, SET_FONT = 'Helvetica Bold', /TT_FONT
       
       axis_format = {XTICKFORMAT:"(A1)", YTICKFORMAT:"(A1)"}   
-      cgimage, Calib_img_deconv, /axes, /keep_aspect, axkeywords = axis_format, title = strmid(UTC,0,10) + ' ' + strmid(UTC,11,5) + ' --- ' + string(mean_seeing, format = '(F3.1)')+'" PSF Deconvolved'
+      cgimage, Lucky_Imaging_Ch_deconv, /axes, /keep_aspect, axkeywords = axis_format, title = 'Na Column x 10!U10!N cm!U-2!N' + '     ' + strmid(UTC,0,10) + ' ' + strmid(UTC,11,5)
       ;cgimage, Spectra_Hapke, /axes, /keep_aspect, axkeywords = axis_format, title = strmid(UTC,0,10) + ' ' + strmid(UTC,11,5) + ' --- ' + string(mean_seeing, format = '(F3.1)')+'" PSF Deconvolved'
       ;cgimage, PSF_2D, /noerase, /keep_aspect, position =  [0.0, 0.0, float(N_elements(PSF_2D[0,*])) / float(N_elements(Calib_img_deconv[0,*])), float(N_elements(PSF_2D[1,*])) / float(N_elements(Calib_img_deconv[1,*]))]
       
@@ -1755,6 +1805,30 @@ if part eq 7 or part eq 99 then begin
       endelse  
    cgPS_Close   
 endif
+
+; =====================================================================================================================
+; Part 8 : Write an MPEG4 Video of the datacube
+; =====================================================================================================================
+if part eq 8 or part eq 99 then begin
+  raw_data_cube = MRDFITS(outdir + 'raw_data_cube.fits', 0, header, /unsigned) 
+  s = size(raw_data_cube, /dim)
+  width = s[0] / 2    ;Bin by 2x to conserve file size for AAS Journal submission
+  height = s[1] / 2   ;Bin by 2x
+  fps = 20
+  window, 0, xs = height, ys = width
+  print, 'Writing video to '+outdir + 'Raw_data_movie_'+night+'.mp4'
+  oVid = IDLffVideoWrite(outdir + 'Raw_data_movie_'+night+'.mp4', FORMAT='mp4')
+  vidStream = oVid.AddVideoStream(width, height, fps, CODEC='mpeg4', PRESET='medium')
+
+  FOR i = 0, N_elements(raw_data_cube[0,0,*])-1 do begin
+    tv, bytscl( reform( rebin(raw_data_cube[*,*,i], width, height) ) )
+    RGB = transpose( rebin(raw_data_cube[*,*,i], width, height, 3), [2,0,1] )
+    !NULL = oVid.Put(vidStream, bytscl(RGB))
+  ENDFOR
+
+  oVid = 0
+endif
+
 print, 'Run time = ',  (SYSTIME(/SECONDS) - Start_time) / 60, ' minutes'
 stop
 end
