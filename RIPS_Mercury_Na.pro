@@ -1514,7 +1514,7 @@ if part eq 7 or part eq 99 then begin
       if (ra - ra_sun)*!radeg gt  28. then ra_sun = ra_sun + 2.*!pi   ; wrap zero crossings by 2pi
       if (ra - ra_sun lt 0.) then side = 'right' else side = 'left'
 
-  cgPS_Open, filename = outdir+body+'_'+Telescope+'_'+night+'.eps', /ENCAPSULATED, xsize = 6, ysize = 6
+  cgPS_Open, filename = outdir+body+'_'+Telescope+'_'+night+'_Rev2.eps', /ENCAPSULATED, xsize = 6, ysize = 6
     !P.font=1
     device, SET_FONT = 'Helvetica Bold', /TT_FONT
     !p.charsize = 1.2
@@ -1762,7 +1762,7 @@ if part eq 7 or part eq 99 then begin
     WRITEFITS, outdir + 'Deconv_Calib'+'_'+night+'.fits', Imaging_Ch
     WRITEFITS, outdir + 'Deconv_Na'+'_'+night+'.fits', Na_img
 
-    cgPS_Open, filename = outdir+body+'_'+Telescope+'_'+night+'_Deconvolved.eps', /ENCAPSULATED, xsize = 6, ysize = 6
+    cgPS_Open, filename = outdir+body+'_'+Telescope+'_'+night+'_Deconvolved_Rev1.eps', /ENCAPSULATED, xsize = 6, ysize = 6
       !P.font=1
       device, SET_FONT = 'Helvetica Bold', /TT_FONT
       
@@ -1793,8 +1793,10 @@ if part eq 7 or part eq 99 then begin
       cold_pole_90[where((cold_pole_90 gt 100) or (cold_pole_90 lt 80))] = !values.F_NaN
       cold_pole_270 = ob.lon
       cold_pole_270[where((cold_pole_270 gt 280) or (cold_pole_270 lt 260))] = !values.F_NaN
-      cgcontour, cold_pole_90, /onimage, levels = [90], color = 'Blue'                        ; marks "cold-pole" longitudes, Cassidy et al. 2016
-      cgcontour, cold_pole_270, /onimage, levels = [270], color = 'Blue'                      ; marks "cold-pole" longitudes, Cassidy et al. 2016
+      ;cgcontour, cold_pole_90, /onimage, levels = [90], color = 'Blue'                        ; marks "cold-pole" longitudes, Cassidy et al. 2016
+      ;cgcontour, cold_pole_270, /onimage, levels = [270], color = 'Blue'                      ; marks "cold-pole" longitudes, Cassidy et al. 2016
+      cgcontour, cold_pole_90, /onimage, levels = [90], color = 'Red'                        ; marks "cold-pole" longitudes, Cassidy et al. 2016
+      cgcontour, cold_pole_270, /onimage, levels = [270], color = 'Red'                      ; marks "cold-pole" longitudes, Cassidy et al. 2016
       ;LEVELS = [4,8,12,16,20,24,28]
       LEVELS = (indgen(20)+1)*2.5
       
